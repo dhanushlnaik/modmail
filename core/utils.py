@@ -42,6 +42,7 @@ __all__ = [
     "AcceptButton",
     "DenyButton",
     "ConfirmThreadCreationView",
+    "DummyParam",
 ]
 
 
@@ -126,7 +127,11 @@ def format_preview(messages: typing.List[typing.Dict[str, typing.Any]]):
             continue
         author = message["author"]
         content = str(message["content"]).replace("\n", " ")
-        name = author["name"] + "#" + str(author["discriminator"])
+
+        name = author["name"]
+        discriminator = str(author["discriminator"])
+        if discriminator != "0":
+            name += "#" + discriminator
         prefix = "[M]" if author["mod"] else "[R]"
         out += truncate(f"`{prefix} {name}:` {content}", max=75) + "\n"
 
@@ -147,13 +152,17 @@ def is_image_url(url: str, **kwargs) -> str:
     bool
         Whether the URL is a valid image URL.
     """
-    if url.startswith("https://gyazo.com") or url.startswith("http://gyazo.com"):
-        # gyazo support
-        url = re.sub(
-            r"(http[s]?:\/\/)((?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+)",
-            r"\1i.\2.png",
-            url,
-        )
+    try:
+        result = parse.urlparse(url)
+        if result.netloc == "gyazo.com" and result.scheme in ["http", "https"]:
+            # gyazo support
+            url = re.sub(
+                r"(https?://)((?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|%[0-9a-fA-F][0-9a-fA-F])+)",
+                r"\1i.\2.png",
+                url,
+            )
+    except ValueError:
+        pass
 
     return parse_image_url(url, **kwargs)
 
@@ -588,3 +597,13 @@ class ConfirmThreadCreationView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=20)
         self.value = None
+
+
+class DummyParam:
+    """
+    A dummy parameter that can be used for MissingRequiredArgument.
+    """
+
+    def __init__(self, name):
+        self.name = name
+        self.displayed_name = name

@@ -1,4 +1,4 @@
-__version__ = "4.0.2"
+__version__ = "4.1.1"
 
 
 import asyncio
@@ -21,8 +21,8 @@ import isodate
 from aiohttp import ClientSession, ClientResponseError
 from discord.ext import commands, tasks
 from discord.ext.commands.view import StringView
-from emoji import UNICODE_EMOJI
-from pkg_resources import parse_version
+from emoji import is_emoji
+from packaging.version import Version
 
 
 try:
@@ -48,7 +48,7 @@ from core.models import (
 )
 from core.thread import ThreadManager
 from core.time import human_timedelta
-from core.utils import extract_block_timestamp, normalize_alias, parse_alias, truncate, tryint
+from core.utils import extract_block_timestamp, normalize_alias, parse_alias, truncate, tryint, human_join
 
 logger = getLogger(__name__)
 
@@ -186,7 +186,7 @@ class ModmailBot(commands.Bot):
 
     @property
     def version(self):
-        return parse_version(__version__)
+        return Version(__version__)
 
     @property
     def api(self) -> ApiClient:
@@ -623,11 +623,11 @@ class ModmailBot(commands.Bot):
         ctx = SimpleNamespace(bot=self, guild=self.modmail_guild)
         converter = commands.EmojiConverter()
 
-        if name not in UNICODE_EMOJI["en"]:
+        if not is_emoji(name):
             try:
                 name = await converter.convert(ctx, name.strip(":"))
             except commands.BadArgument as e:
-                logger.warning("%s is not a valid emoji. %s.", name, e)
+                logger.warning("%s is not a valid emoji: %s", name, e)
                 raise
         return name
 
@@ -1388,28 +1388,44 @@ class ModmailBot(commands.Bot):
             await thread.close(closer=mod, silent=True, delete_channel=False)
 
     async def on_member_remove(self, member):
-        if member.guild != self.guild:
-            return
         thread = await self.threads.find(recipient=member)
         if thread:
-            if self.config["close_on_leave"]:
+            if member.guild == self.guild and self.config["close_on_leave"]:
                 await thread.close(
                     closer=member.guild.me,
                     message=self.config["close_on_leave_reason"],
                     silent=True,
                 )
             else:
-                embed = discord.Embed(
-                    description=self.config["close_on_leave_reason"], color=self.error_color
-                )
+                if len(self.guilds) > 1:
+                    guild_left = member.guild
+                    remaining_guilds = member.mutual_guilds
+
+                    if remaining_guilds:
+                        remaining_guild_names = [guild.name for guild in remaining_guilds]
+                        leave_message = (
+                            f"The recipient has left {guild_left}. "
+                            f"They are still in {human_join(remaining_guild_names, final='and')}."
+                        )
+                    else:
+                        leave_message = (
+                            f"The recipient has left {guild_left}. We no longer share any mutual servers."
+                        )
+                else:
+                    leave_message = "The recipient has left the server."
+
+                embed = discord.Embed(description=leave_message, color=self.error_color)
                 await thread.channel.send(embed=embed)
 
     async def on_member_join(self, member):
-        if member.guild != self.guild:
-            return
         thread = await self.threads.find(recipient=member)
         if thread:
-            embed = discord.Embed(description="The recipient has joined the server.", color=self.mod_color)
+            if len(self.guilds) > 1:
+                guild_joined = member.guild
+                join_message = f"The recipient has joined {guild_joined}."
+            else:
+                join_message = "The recipient has joined the server."
+            embed = discord.Embed(description=join_message, color=self.mod_color)
             await thread.channel.send(embed=embed)
 
     async def on_message_delete(self, message):
@@ -1586,7 +1602,7 @@ class ModmailBot(commands.Bot):
         changelog = await Changelog.from_url(self)
         latest = changelog.latest_version
 
-        if self.version < parse_version(latest.version):
+        if self.version < Version(latest.version):
             error = None
             data = {}
             try:
@@ -1746,9 +1762,10 @@ class ModmailBot(commands.Bot):
                 if force_null:
                     name = "null"
 
-                name = new_name = (
-                    "".join(l for l in name if l not in string.punctuation and l.isprintable()) or "null"
-                ) + f"-{author.discriminator}"
+                name = "".join(l for l in name if l not in string.punctuation and l.isprintable()) or "null"
+                if author.discriminator != "0":
+                    name += f"-{author.discriminator}"
+                new_name = name
 
         counter = 1
         existed = set(c.name for c in guild.text_channels if c != exclude_channel)
@@ -1793,7 +1810,7 @@ def main():
         sys.exit(0)
 
     # check discord version
-    discord_version = "2.0.1"
+    discord_version = "2.3.2"
     if discord.__version__ != discord_version:
         logger.error(
             "Dependencies are not updated, run pipenv install. discord.py version expected %s, received %s",

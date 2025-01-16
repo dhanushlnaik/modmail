@@ -3,7 +3,6 @@ import re
 from datetime import datetime, timezone
 from itertools import zip_longest
 from typing import Optional, Union, List, Tuple, Literal
-from types import SimpleNamespace
 
 import discord
 from discord.ext import commands
@@ -697,9 +696,15 @@ class Modmail(commands.Cog):
     @checks.thread_only()
     async def msglink(self, ctx, message_id: int):
         """Retrieves the link to a message in the current thread."""
-        try:
-            message = await ctx.thread.recipient.fetch_message(message_id)
-        except discord.NotFound:
+        found = False
+        for recipient in ctx.thread.recipients:
+            try:
+                message = await recipient.fetch_message(message_id)
+                found = True
+                break
+            except discord.NotFound:
+                continue
+        if not found:
             embed = discord.Embed(
                 color=self.bot.error_color, description="Message not found or no longer exists."
             )
@@ -730,8 +735,9 @@ class Modmail(commands.Cog):
                 f"{self.bot.config['log_url'].strip('/')}{'/' + prefix if prefix else ''}/{entry['key']}"
             )
 
-            username = entry["recipient"]["name"] + "#"
-            username += entry["recipient"]["discriminator"]
+            username = entry["recipient"]["name"]
+            if entry["recipient"]["discriminator"] != "0":
+                username += "#" + entry["recipient"]["discriminator"]
 
             embed = discord.Embed(color=self.bot.main_color, timestamp=created_at)
             embed.set_author(name=f"{title} - {username}", icon_url=avatar_url, url=log_url)
@@ -1164,7 +1170,7 @@ class Modmail(commands.Cog):
         if not user:
             thread = ctx.thread
             if not thread:
-                raise commands.MissingRequiredArgument(SimpleNamespace(name="member"))
+                raise commands.MissingRequiredArgument(DummyParam("user"))
             user = thread.recipient or await self.bot.get_or_fetch_user(thread.id)
 
         default_avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
@@ -1839,7 +1845,7 @@ class Modmail(commands.Cog):
             if thread:
                 user_or_role = thread.recipient
             elif after is None:
-                raise commands.MissingRequiredArgument(SimpleNamespace(name="user or role"))
+                raise commands.MissingRequiredArgument(DummyParam("user or role"))
             else:
                 raise commands.BadArgument(f'User or role "{after.arg}" not found.')
 
@@ -1856,7 +1862,7 @@ class Modmail(commands.Cog):
             )
             return await ctx.send(embed=embed)
 
-        reason = f"by {escape_markdown(ctx.author.name)}#{ctx.author.discriminator}"
+        reason = f"by {escape_markdown(str(ctx.author))}"
 
         if after is not None:
             if "%" in reason:
@@ -1919,7 +1925,7 @@ class Modmail(commands.Cog):
             if thread:
                 user_or_role = thread.recipient
             else:
-                raise commands.MissingRequiredArgument(SimpleNamespace(name="user"))
+                raise commands.MissingRequiredArgument(DummyParam("user or role"))
 
         mention = getattr(user_or_role, "mention", f"`{user_or_role.id}`")
         name = getattr(user_or_role, "name", f"`{user_or_role.id}`")
@@ -2055,11 +2061,12 @@ class Modmail(commands.Cog):
 
         # match username from channel name
         # username-1234, username-1234_1, username-1234_2
-        m = re.match(r"^(.+)-(\d{4})(?:_\d+)?$", ctx.channel.name)
+        m = re.match(r"^(.+?)(?:-(\d{4}))?(?:_\d+)?$", ctx.channel.name)
         if m is not None:
             users = set(
                 filter(
-                    lambda member: member.name == m.group(1) and member.discriminator == m.group(2),
+                    lambda member: member.name == m.group(1)
+                    and (member.discriminator == "0" or member.discriminator == m.group(2)),
                     ctx.guild.members,
                 )
             )

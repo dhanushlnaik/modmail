@@ -6,8 +6,8 @@ import shutil
 import sys
 import typing
 import zipfile
-from importlib import invalidate_caches
 from difflib import get_close_matches
+from importlib import invalidate_caches
 from pathlib import Path, PurePath
 from re import match
 from site import USER_SITE
@@ -15,13 +15,12 @@ from subprocess import PIPE
 
 import discord
 from discord.ext import commands
-
-from pkg_resources import parse_version
+from packaging.version import Version
 
 from core import checks
 from core.models import PermissionLevel, getLogger
 from core.paginator import EmbedPaginatorSession
-from core.utils import truncate, trigger_typing
+from core.utils import trigger_typing, truncate
 
 logger = getLogger(__name__)
 
@@ -132,8 +131,11 @@ class Plugins(commands.Cog):
 
     async def populate_registry(self):
         url = "https://raw.githubusercontent.com/modmail-dev/modmail/master/plugins/registry.json"
-        async with self.bot.session.get(url) as resp:
-            self.registry = json.loads(await resp.text())
+        try:
+            async with self.bot.session.get(url) as resp:
+                self.registry = json.loads(await resp.text())
+        except asyncio.TimeoutError:
+            logger.warning("Failed to fetch registry. Loading with empty registry")
 
     async def initial_load_plugins(self):
         for plugin_name in list(self.bot.config["plugins"]):
@@ -300,7 +302,7 @@ class Plugins(commands.Cog):
             if check_version:
                 required_version = details.get("bot_version", False)
 
-                if required_version and self.bot.version < parse_version(required_version):
+                if required_version and self.bot.version < Version(required_version):
                     embed = discord.Embed(
                         description="Your bot's version is too low. "
                         f"This plugin requires version `{required_version}`.",
@@ -638,6 +640,14 @@ class Plugins(commands.Cog):
 
         registry = sorted(self.registry.items(), key=lambda elem: elem[0])
 
+        if not registry:
+            embed = discord.Embed(
+                color=self.bot.error_color,
+                description="Registry is empty. This could be because it failed to load.",
+            )
+            await ctx.send(embed=embed)
+            return
+
         if isinstance(plugin_name, int):
             index = plugin_name - 1
             if index < 0:
@@ -688,7 +698,7 @@ class Plugins(commands.Cog):
                 embed.set_footer(text="This plugin is currently loaded.")
             else:
                 required_version = details.get("bot_version", False)
-                if required_version and self.bot.version < parse_version(required_version):
+                if required_version and self.bot.version < Version(required_version):
                     embed.set_footer(
                         text="Your bot is unable to install this plugin, "
                         f"minimum required version is v{required_version}."
